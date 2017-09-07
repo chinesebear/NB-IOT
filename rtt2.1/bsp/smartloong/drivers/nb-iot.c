@@ -31,14 +31,82 @@ static rt_err_t found_uart3(rt_device_t* NBdev)
 	}
 	return RT_EOK;
 }
+static rt_err_t found_str(char* str,const char* substr,int*subendpos)
+{
+	int i;
+	rt_err_t ret=RT_ERROR;
+	for(i=0;i<strlen(str);i++)
+	if(rt_memcmp(str+i,substr,strlen(substr))==0)
+	{
+		*subendpos = i+ strlen(substr);
+		return RT_EOK;
+	}	
+	return ret;
+}
+
+static rt_err_t SendData(rt_uint8_t* data,int len)
+{
+	rt_err_t ret = rt_device_write(NB_IOT_UART,0,data,len);
+	rt_kprintf("%s\r\n",data);
+	return ret;
+}
+static rt_err_t RecvData(rt_uint8_t* data,int* len,int timeoutms)
+{
+	int i=0,ticks=0;
+	int ilen=0;
+	rt_memset(data,0x00,*len);
+	ticks = timeoutms/10;
+	while(i<ticks)
+	{
+		rt_thread_delay(10);
+		i+=10;
+		ilen=rt_device_read(NB_IOT_UART,0,data,*len);
+		if(ilen)break;
+	}
+	if(i>ticks)return RT_ETIMEOUT;
+	rt_kprintf("%s\r\n",data);
+	return RT_EOK;
+}
 static rt_err_t AT_NBR(void)//reboot
 {
+	rt_err_t ret;
+	char* cmd = "AT+NBR\r\n";
+	char resp[256],rlen=256,int pos;
 	
+	SendData(cmd,strlen(cmd));
+	ret = RecvData(resp,&rlen,2000);
+	if(ret)return ret;
+	return found_str(resp,"REBOOT",&pos);
 }
-static rt_err_t AT_NBAND(void)
+static rt_err_t AT_NBAND(int* band)
 {
-	
+	rt_err_t ret;
+	char* cmd0 = "AT+NBAND?\r\n";
+	char resp[256],rlen=256,pos;
+	SendData(cmd0,strlen(cmd0));
+	ret = RecvData(resp,&rlen,2000);
+	if(ret)return ret;
+	found_str(resp,"+NBAND:",&pos)
+	*band = resp[pos]-'0';
+	return RT_EOK;
+
 }
+static rt_err_t AT_NBAND2(int band)
+{
+	rt_err_t ret;
+	char* cmd0 = "AT+NBAND";
+	char cmd1[20];//band5 850mhz china telecom
+	char resp[256],rlen=256,pos;
+	rt_sprintf(cmd1,"%s=%s\r\n",cmd0,band);
+	ret = SendData(cmd1,strlen(cmd1));
+	if(ret)return ret;
+	ret = RecvData(resp,&rlen,2000);
+	if(ret)return ret;
+	ret = found_str(resp,"OK",&pos);
+	if(ret)return ret;
+	return RT_EOK;
+}
+
 static rt_err_t AT_NCONFIG(void)
 {
 	
@@ -103,6 +171,16 @@ static rt_err_t rt_nb_iot_init(rt_device_t dev)
 static rt_err_t rt_nb_iot_open(rt_device_t dev, rt_uint16_t oflag)
 {
 	RT_ASSERT(dev != RT_NULL);
+	int band;
+	AT_NBAND(&band);
+	if(band != 5)
+	{
+		AT_NBAND2(5);
+		AT_NBR();
+		rt_thread_delay(50);
+		AT_NBAND(&band);
+		if(band != 5)return RT_EOK;
+	}
 	return RT_EOK;
 }
 static rt_err_t rt_nb_iot_close(rt_device_t dev)
